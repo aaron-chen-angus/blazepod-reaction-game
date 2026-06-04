@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Virtual BlazePod Reaction Game</title>
+
+  <!-- MediaPipe CDN scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    /* ── Design Tokens ─────────────────────────────────────────── */
+    :root {
+      --clr-bg:        #0a0a0a;
+      --clr-surface:   #1a1a2e;
+      --clr-primary:   #ff6b00;
+      --clr-danger:    #ff3333;
+      --clr-text:      #f0f0f0;
+      --clr-hud-bg:    rgba(0, 0, 0, 0.65);
+      --clr-btn-text:  #0a0a0a;
+
+      --font-base:   18px;
+      --font-hud:    26px;
+      --font-title:  32px;
+      --font-metric: 28px;
+      --font-label:  18px;
+
+      --btn-min:   64px;
+      --target-r:  50px;
+      --cursor-d:  24px;
+    }
+
+    /* ── Reset / Base ──────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow-x: hidden;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100dvh;
+      background: var(--clr-bg);
+      color: var(--clr-text);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: var(--font-base);
+    }
+
+    /* ── Landscape Rotation Guard ──────────────────────────────── */
+    #rotate-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      background: var(--clr-bg);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 2rem;
+      gap: 1.5rem;
+    }
+
+    #rotate-overlay .rotate-icon {
+      font-size: 64px;
+      line-height: 1;
+    }
+
+    #rotate-overlay p {
+      font-size: 22px;
+      color: var(--clr-text);
+      max-width: 320px;
+      line-height: 1.5;
+    }
+
+    @media (orientation: landscape) {
+      #rotate-overlay { display: flex; }
+    }
+
+    /* ── Screen Overlays ───────────────────────────────────────── */
+    .screen {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: var(--clr-bg);
+      padding: 1.5rem;
+      gap: 1.25rem;
+      overflow-y: auto;
+    }
+
+    .screen[hidden] { display: none; }
+
+    /* ── Start Screen ──────────────────────────────────────────── */
+    #screen-start h1 {
+      font-size: var(--font-title);
+      color: var(--clr-primary);
+      text-align: center;
+      letter-spacing: 0.02em;
+    }
+
+    #screen-start h2 {
+      font-size: 22px;
+      color: var(--clr-text);
+      text-align: center;
+      font-weight: 400;
+      margin-top: -0.5rem;
+    }
+
+    #how-to-play {
+      background: var(--clr-surface);
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      width: 100%;
+      max-width: 360px;
+      list-style: decimal;
+      list-style-position: inside;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    #how-to-play li {
+      font-size: var(--font-base);
+      color: var(--clr-text);
+      line-height: 1.5;
+    }
+
+    #error-message {
+      background: #3a0000;
+      border: 2px solid var(--clr-danger);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      font-size: var(--font-base);
+      color: #ffaaaa;
+      text-align: center;
+      max-width: 360px;
+      width: 100%;
+      line-height: 1.5;
+    }
+
+    /* ── Buttons ───────────────────────────────────────────────── */
+    .btn {
+      min-width: var(--btn-min);
+      min-height: var(--btn-min);
+      padding: 0.75rem 2rem;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.1s;
+      width: 100%;
+      max-width: 320px;
+    }
+
+    .btn:active { transform: scale(0.96); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary {
+      background: var(--clr-primary);
+      color: var(--clr-btn-text);
+    }
+
+    .btn-secondary {
+      background: var(--clr-surface);
+      color: var(--clr-text);
+      border: 2px solid #444;
+    }
+
+    /* ── Game Container (video + canvas stacked) ───────────────── */
+    #game-container {
+      position: relative;
+      width: 100%;
+      max-width: min(100vw, calc(100dvh * 9 / 16));
+      aspect-ratio: 9 / 16;
+      background: #000;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    #camera-feed {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror */
+    }
+
+    #game-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+    }
+
+    /* ── Results Screen ────────────────────────────────────────── */
+    #screen-results h2 {
+      font-size: var(--font-title);
+      color: var(--clr-primary);
+      text-align: center;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      width: 100%;
+      max-width: 360px;
+    }
+
+    .metric {
+      background: var(--clr-surface);
+      border-radius: 12px;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .metric .label {
+      font-size: var(--font-label);
+      color: #aaaaaa;
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    .metric .value {
+      font-size: var(--font-metric);
+      font-weight: 700;
+      color: var(--clr-text);
+      text-align: center;
+    }
+
+    .results-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      width: 100%;
+      max-width: 320px;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Landscape Rotation Guard ──────────────────────────────── -->
+  <div id="rotate-overlay" aria-live="polite">
+    <div class="rotate-icon">📱</div>
+    <p>Please rotate your device to portrait mode to play.</p>
+  </div>
+
+  <!-- ── Start Screen ──────────────────────────────────────────── -->
+  <div id="screen-start" class="screen">
+    <h1>Virtual BlazePod</h1>
+    <h2>Reaction Game</h2>
+
+    <ol id="how-to-play" aria-label="How to play">
+      <li>Point your index finger at the camera.</li>
+      <li>Touch the orange circles as fast as you can.</li>
+      <li>Score as many hits as you can in 30 seconds!</li>
+    </ol>
+
+    <button id="btn-start" class="btn btn-primary" aria-label="Start game">
+      START
+    </button>
+
+    <div id="error-message" role="alert" hidden></div>
+  </div>
+
+  <!-- ── Game Container ────────────────────────────────────────── -->
+  <div id="game-container" hidden>
+    <video id="camera-feed" autoplay playsinline muted></video>
+    <canvas id="game-canvas"></canvas>
+  </div>
+
+  <!-- ── Results Screen ────────────────────────────────────────── -->
+  <div id="screen-results" class="screen" hidden>
+    <h2>Your Results</h2>
+
+    <div class="metric-grid" aria-label="Game results">
+      <div class="metric">
+        <span class="label">Score</span>
+        <span id="r-score" class="value" aria-label="Score">—</span>
+      </div>
+      <div class="metric">
+        <span class="label">Accuracy</span>
+        <span id="r-accuracy" class="value" aria-label="Accuracy">—</span>
+      </div>
+      <div class="metric">
+        <span class="label">Avg Reaction</span>
+        <span id="r-avg-rt" class="value" aria-label="Average reaction time">—</span>
+      </div>
+      <div class="metric">
+        <span class="label">Fastest</span>
+        <span id="r-best-rt" class="value" aria-label="Fastest reaction time">—</span>
+      </div>
+    </div>
+
+    <div class="results-buttons">
+      <button id="btn-play-again" class="btn btn-primary" aria-label="Play again">
+        PLAY AGAIN
+      </button>
+      <button id="btn-home" class="btn btn-secondary" aria-label="Return to home screen">
+        HOME
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Main Script ────────────────────────────────────────────── -->
+  <script>
+    'use strict';
+
+    /* ════════════════════════════════════════════════════════════
+       1. CONSTANTS & CONFIGURATION
+    ════════════════════════════════════════════════════════════ */
+    const SESSION_DURATION    = 30000;  // ms  R8.1
+    const TARGET_DURATION     = 3000;   // ms  R5.8, R7.1
+    const TARGET_RADIUS       = 50;     // px  R5.5, R12.3  (diameter 100px)
+    const CURSOR_RADIUS       = 12;     // px  R4.8          (diameter 24px)
+    const HIT_ANIM_DURATION   = 400;    // ms  R6.4
+    const MISS_ANIM_DURATION  = 500;    // ms  R7.3
+    const NEXT_TARGET_DELAY   = 200;    // ms  R5.2
+    const FIRST_TARGET_DELAY  = 500;    // ms  R5.1
+    const STALE_HAND_TIMEOUT  = 2000;   // ms  R4.6, R4.7
+    const NO_HAND_PROMPT_SHOW = 3000;   // ms  R12.6
+    const NO_HAND_PROMPT_COOL = 5000;   // ms  R12.7
+    const HUD_HEIGHT          = 52;     // px  R11.4 — spawn Y offset
+    const CDN_LOAD_TIMEOUT    = 10000;  // ms  R1.6
+    const MIN_TARGET_DISTANCE = 50;     // px  R5.4
+
+    /* ════════════════════════════════════════════════════════════
+       2. DOM REFERENCES  (assigned in DOMContentLoaded)
+    ════════════════════════════════════════════════════════════ */
+    let gameCanvas, ctx, videoEl;
+
+    /* ════════════════════════════════════════════════════════════
+       3. GAME STATE
+    ════════════════════════════════════════════════════════════ */
+    const GameState = {
+      phase: 'idle',            // 'idle'|'starting'|'playing'|'ending'|'results'
+
+      sessionStartTime: null,   // performance.now() when session started
+      sessionDuration: SESSION_DURATION,
+      timerRemaining: 30,       // whole seconds for HUD
+
+      score: 0,
+      misses: 0,
+      reactionTimes: [],        // number[] ms per hit
+
+      targetIdCounter: 0,
+      lastTargetPos: null,      // { x, y } of previous target centre
+
+      indexTip: null,           // { x, y } canvas pixels | null
+      lastHandSeenTime: null,   // performance.now() of last hand frame
+      noHandPromptShownAt: null,// performance.now() when prompt last shown
+
+      rafId: null,              // requestAnimationFrame handle
+    };
+
+    let activeTarget = null;    // ActiveTarget | null
+    let nextTargetTimer = null; // setTimeout handle for scheduled spawn
+
+    function resetGameState() {
+      GameState.phase            = 'idle';
+      GameState.sessionStartTime = null;
+      GameState.timerRemaining   = 30;
+      GameState.score            = 0;
+      GameState.misses           = 0;
+      GameState.reactionTimes    = [];
+      GameState.targetIdCounter  = 0;
+      GameState.lastTargetPos    = null;
+      GameState.indexTip         = null;
+      GameState.lastHandSeenTime = null;
+      GameState.noHandPromptShownAt = null;
+      GameState.rafId            = null;
+      activeTarget               = null;
+      if (nextTargetTimer) { clearTimeout(nextTargetTimer); nextTargetTimer = null; }
+      AnimationManager.list      = [];
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       4. HAND TRACKER  (owns camera lifecycle via MediaPipe Camera)
+    ════════════════════════════════════════════════════════════ */
+    const HandTracker = {
+      hands: null,
+      mpCamera: null,
+      permTimeout: null,
+      firstFrameSeen: false,
+
+      init(video) {
+        // Construct a fresh Hands instance each session
+        this.hands = new Hands({
+          locateFile: (file) =>
+            `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        this.hands.setOptions({
+          maxNumHands: 1,
+          modelComplexity: 0,
+          minDetectionConfidence: 0.7,
+          minTrackingConfidence: 0.5,
+        });
+
+        this.hands.onResults((results) => this.onHandResults(results));
+
+        this.firstFrameSeen = false;
+
+        // 10-second permission prompt timeout
+        this.permTimeout = setTimeout(() => {
+          if (!this.firstFrameSeen) {
+            UIManager.showPermissionHint();
+          }
+        }, 10000);
+
+        // MediaPipe Camera owns getUserMedia internally
+        this.mpCamera = new Camera(video, {
+          onFrame: async () => {
+            // Clear permission timeout on first frame (camera is live)
+            if (!this.firstFrameSeen) {
+              this.firstFrameSeen = true;
+              clearTimeout(this.permTimeout);
+            }
+            if (GameState.phase === 'playing') {
+              await this.hands.send({ image: video });
+            }
+          },
+          width: 640,
+          height: 480,
+        });
+
+        this.mpCamera.start().catch((err) => {
+          clearTimeout(this.permTimeout);
+          let msg;
+          if (err.name === 'NotAllowedError' || err.message?.includes('Permission')) {
+            msg = 'Camera access was denied. Please enable camera permission in your browser settings and try again.';
+          } else if (err.name === 'NotFoundError') {
+            msg = 'No camera was found on this device.';
+          } else {
+            msg = 'Could not access camera: ' + (err.message || err);
+          }
+          UIManager.showError(msg);
+          GameState.phase = 'idle';
+        });
+      },
+
+      onHandResults(results) {
+        // Phase guard — ignore frames outside of active gameplay
+        if (GameState.phase !== 'playing') return;
+
+        if (
+          results.multiHandLandmarks &&
+          results.multiHandLandmarks.length > 0
+        ) {
+          const tip = results.multiHandLandmarks[0][8]; // INDEX_FINGER_TIP
+          // Mirror X to match CSS scaleX(-1) on the video
+          GameState.indexTip = {
+            x: (1 - tip.x) * gameCanvas.width,
+            y: tip.y * gameCanvas.height,
+          };
+          GameState.lastHandSeenTime = performance.now();
+        }
+        // No hand — do NOT clear indexTip here; stale retention handled in tick()
+      },
+
+      stop() {
+        clearTimeout(this.permTimeout);
+        if (this.mpCamera) {
+          try { this.mpCamera.stop(); } catch (_) {}
+          this.mpCamera = null;
+        }
+        if (this.hands) {
+          try { this.hands.close(); } catch (_) {}
+          this.hands = null;
+        }
+      },
+    };
+
+    /* ════════════════════════════════════════════════════════════
+       5. TARGET MANAGER
+    ════════════════════════════════════════════════════════════ */
+    const TargetManager = {
+      lastPos: null,
+      idCounter: 0,
+
+      spawn() {
+        const w = gameCanvas.width;
+        const h = gameCanvas.height;
+        const xMargin    = TARGET_RADIUS;
+        const yMarginTop = HUD_HEIGHT + TARGET_RADIUS; // keep below HUD
+        const yMarginBot = TARGET_RADIUS;
+
+        let bestX = xMargin + Math.random() * (w - 2 * xMargin);
+        let bestY = yMarginTop + Math.random() * (h - yMarginTop - yMarginBot);
+        let bestDist = -1;
+
+        for (let i = 0; i < 10; i++) {
+          const cx = xMargin    + Math.random() * (w - 2 * xMargin);
+          const cy = yMarginTop + Math.random() * (h - yMarginTop - yMarginBot);
+
+          if (!this.lastPos) {
+            bestX = cx; bestY = cy;
+            break;
+          }
+
+          const d = Math.hypot(cx - this.lastPos.x, cy - this.lastPos.y);
+          if (d > bestDist) { bestDist = d; bestX = cx; bestY = cy; }
+          if (d > MIN_TARGET_DISTANCE) break;
+        }
+
+        activeTarget = {
+          id: ++this.idCounter,
+          x: bestX,
+          y: bestY,
+          radius: TARGET_RADIUS,
+          spawnTime: performance.now(),
+          duration: TARGET_DURATION,
+          hit: false,
+        };
+        this.lastPos = { x: bestX, y: bestY };
+      },
+
+      scheduleNext(delayMs) {
+        if (nextTargetTimer) clearTimeout(nextTargetTimer);
+        nextTargetTimer = setTimeout(() => {
+          nextTargetTimer = null;
+          if (GameState.phase === 'playing') {
+            TargetManager.spawn();
+          }
+        }, delayMs);
+      },
+
+      checkTimeout(now) {
+        if (!activeTarget || activeTarget.hit) return;
+        if (now - activeTarget.spawnTime >= TARGET_DURATION) {
+          this.registerMiss(now);
+        }
+      },
+
+      checkHit() {
+        if (!activeTarget || activeTarget.hit || !GameState.indexTip) return;
+        const dx = GameState.indexTip.x - activeTarget.x;
+        const dy = GameState.indexTip.y - activeTarget.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= activeTarget.radius) {
+          this.registerHit();
+        }
+      },
+
+      registerHit() {
+        // Set hit flag FIRST to prevent any double-hit
+        activeTarget.hit = true;
+        const now = performance.now();
+        const rt  = Math.round(now - activeTarget.spawnTime);
+
+        GameState.score++;
+        GameState.reactionTimes.push(rt);
+
+        AnimationManager.add({
+          type: 'hit',
+          x: activeTarget.x,
+          y: activeTarget.y,
+          radius: activeTarget.radius,
+          startTime: now,
+          duration: HIT_ANIM_DURATION,
+        });
+
+        activeTarget = null;
+        this.scheduleNext(NEXT_TARGET_DELAY);
+      },
+
+      registerMiss(now) {
+        GameState.misses++;
+
+        AnimationManager.add({
+          type: 'miss',
+          x: activeTarget.x,
+          y: activeTarget.y,
+          radius: activeTarget.radius,
+          startTime: now,
+          duration: MISS_ANIM_DURATION,
+        });
+
+        activeTarget = null;
+        this.scheduleNext(NEXT_TARGET_DELAY);
+      },
+
+      reset() {
+        this.lastPos   = null;
+        this.idCounter = 0;
+      },
+    };
+
+    /* ════════════════════════════════════════════════════════════
+       6. ANIMATION MANAGER
+    ════════════════════════════════════════════════════════════ */
+    const AnimationManager = {
+      list: [],
+
+      add(entry) {
+        this.list.push(entry);
+      },
+
+      prune(now) {
+        this.list = this.list.filter(
+          (a) => now - a.startTime < a.duration
+        );
+      },
+    };
+
+    /* ════════════════════════════════════════════════════════════
+       7. RENDERER  (pure canvas draw — no state mutation)
+    ════════════════════════════════════════════════════════════ */
+    function drawTarget(target, now) {
+      const { x, y, radius, spawnTime, duration } = target;
+
+      // Target body
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff6b00';
+      ctx.fill();
+
+      // Inner highlight ring (non-colour shape cue — R12.5)
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 0.55, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // Centre dot
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.fill();
+
+      // Countdown ring — depletes clockwise (non-colour time cue — R12.5)
+      const elapsed  = now - spawnTime;
+      const fraction = Math.max(0, 1 - elapsed / duration); // 1→0
+      if (fraction > 0) {
+        const startAngle = -Math.PI / 2;
+        const endAngle   = startAngle + fraction * Math.PI * 2;
+        ctx.beginPath();
+        ctx.arc(x, y, radius + 7, startAngle, endAngle);
+        ctx.strokeStyle = fraction > 0.33 ? '#ffffff' : '#ff3333';
+        ctx.lineWidth = 5;
+        ctx.lineCap  = 'round';
+        ctx.stroke();
+      }
+    }
+
+    function drawCursor(tip) {
+      // Outer glow ring
+      ctx.beginPath();
+      ctx.arc(tip.x, tip.y, CURSOR_RADIUS + 4, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(0, 220, 255, 0.3)';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+
+      // Cursor body
+      ctx.beginPath();
+      ctx.arc(tip.x, tip.y, CURSOR_RADIUS, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0, 220, 255, 0.85)';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function drawHUD() {
+      const pad = 12;
+      const bh  = HUD_HEIGHT;
+      const bw  = 170;
+
+      ctx.save();
+
+      // Left panel — Score
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+      ctx.beginPath();
+      ctx.roundRect(0, 0, bw, bh, [0, 0, 10, 0]);
+      ctx.fill();
+
+      ctx.fillStyle = '#f0f0f0';
+      ctx.font = 'bold 26px system-ui, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.fillText(`⭐ ${GameState.score}`, pad, bh / 2);
+
+      // Right panel — Timer
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+      ctx.beginPath();
+      ctx.roundRect(gameCanvas.width - bw, 0, bw, bh, [0, 0, 0, 10]);
+      ctx.fill();
+
+      const timerText  = `⏱ ${GameState.timerRemaining}s`;
+      ctx.fillStyle    = GameState.timerRemaining <= 5 ? '#ff3333' : '#f0f0f0';
+      ctx.textAlign    = 'right';
+      ctx.fillText(timerText, gameCanvas.width - pad, bh / 2);
+
+      ctx.restore();
+    }
+
+    function drawAnimations(now) {
+      for (const anim of AnimationManager.list) {
+        const t = (now - anim.startTime) / anim.duration; // 0→1
+        if (t >= 1) continue;
+
+        if (anim.type === 'hit') {
+          // Expanding ripple ring
+          const r     = anim.radius * (1 + t * 1.8);
+          const alpha = 0.9 * (1 - t);
+          ctx.beginPath();
+          ctx.arc(anim.x, anim.y, r, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(255, 255, 80, ${alpha})`;
+          ctx.lineWidth   = 4;
+          ctx.stroke();
+
+          // Secondary smaller ring
+          const r2     = anim.radius * (1 + t * 0.8);
+          const alpha2 = 0.6 * (1 - t);
+          ctx.beginPath();
+          ctx.arc(anim.x, anim.y, r2, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(255, 200, 0, ${alpha2})`;
+          ctx.lineWidth   = 2;
+          ctx.stroke();
+        } else {
+          // Fade-out grey disc (miss)
+          const alpha = 0.75 * (1 - t);
+          ctx.beginPath();
+          ctx.arc(anim.x, anim.y, anim.radius, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(150, 150, 150, ${alpha})`;
+          ctx.fill();
+
+          // X mark (non-colour miss cue — R12.5)
+          const xAlpha = 0.9 * (1 - t);
+          const size   = anim.radius * 0.45;
+          ctx.save();
+          ctx.translate(anim.x, anim.y);
+          ctx.strokeStyle = `rgba(255, 80, 80, ${xAlpha})`;
+          ctx.lineWidth   = 5;
+          ctx.lineCap     = 'round';
+          ctx.beginPath();
+          ctx.moveTo(-size, -size); ctx.lineTo(size, size);
+          ctx.moveTo( size, -size); ctx.lineTo(-size, size);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+
+    function drawPromptBox() {
+      const text = '☝  Raise your hand into view';
+      const pw   = Math.min(gameCanvas.width - 40, 360);
+      const ph   = 64;
+      const px   = (gameCanvas.width  - pw) / 2;
+      const py   = (gameCanvas.height - ph) / 2;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.80)';
+      ctx.beginPath();
+      ctx.roundRect(px, py, pw, ph, 12);
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(255, 107, 0, 0.7)';
+      ctx.lineWidth   = 2;
+      ctx.stroke();
+
+      ctx.fillStyle   = '#ffffff';
+      ctx.font        = 'bold 20px system-ui, sans-serif';
+      ctx.textAlign   = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, gameCanvas.width / 2, py + ph / 2);
+      ctx.restore();
+    }
+
+    function drawNoHandPrompt(now) {
+      if (GameState.phase !== 'playing') return;
+
+      const ref = GameState.lastHandSeenTime || GameState.sessionStartTime;
+      const noHandDuration = now - ref;
+
+      if (noHandDuration < STALE_HAND_TIMEOUT) return;
+
+      const lastShown = GameState.noHandPromptShownAt;
+
+      if (lastShown) {
+        const sinceLast = now - lastShown;
+        if (sinceLast < NO_HAND_PROMPT_SHOW) {
+          // Still in the "show" window — keep drawing
+          drawPromptBox();
+          return;
+        }
+        if (sinceLast < NO_HAND_PROMPT_COOL) {
+          // In cooldown — do not show again yet
+          return;
+        }
+      }
+
+      // Trigger a new prompt display
+      GameState.noHandPromptShownAt = now;
+      drawPromptBox();
+    }
+
+    function renderFrame(now) {
+      ctx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+      // Draw order: back → front
+      drawAnimations(now);
+
+      if (activeTarget && !activeTarget.hit) {
+        drawTarget(activeTarget, now);
+      }
+
+      if (GameState.indexTip) {
+        drawCursor(GameState.indexTip);
+      }
+
+      drawHUD();
+      drawNoHandPrompt(now);
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       8. METRICS CALCULATOR
+    ════════════════════════════════════════════════════════════ */
+    function calculateMetrics() {
+      const { score, misses, reactionTimes } = GameState;
+      const total = score + misses;
+
+      const accuracy = total === 0
+        ? 'N/A'
+        : (score / total * 100).toFixed(1) + '%';
+
+      const avgRT = reactionTimes.length === 0
+        ? 'N/A'
+        : Math.round(
+            reactionTimes.reduce((a, b) => a + b, 0) / reactionTimes.length
+          ) + ' ms';
+
+      const bestRT = reactionTimes.length === 0
+        ? 'N/A'
+        : Math.round(Math.min(...reactionTimes)) + ' ms';
+
+      return { score, accuracy, avgRT, bestRT };
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       9. UI MANAGER
+    ════════════════════════════════════════════════════════════ */
+    const UIManager = {
+      showScreen(name) {
+        // name: 'start' | 'game' | 'results'
+        document.getElementById('screen-start').hidden    = (name !== 'start');
+        document.getElementById('screen-results').hidden  = (name !== 'results');
+        const gc = document.getElementById('game-container');
+        gc.hidden = (name !== 'game');
+      },
+
+      showError(msg) {
+        const el = document.getElementById('error-message');
+        el.textContent = msg;
+        el.hidden = false;
+      },
+
+      hideError() {
+        const el = document.getElementById('error-message');
+        el.hidden = true;
+        el.textContent = '';
+      },
+
+      showPermissionHint() {
+        this.showError('Please respond to the camera permission prompt in your browser.');
+      },
+
+      populateResults({ score, accuracy, avgRT, bestRT }) {
+        document.getElementById('r-score').textContent    = score;
+        document.getElementById('r-accuracy').textContent = accuracy;
+        document.getElementById('r-avg-rt').textContent   = avgRT;
+        document.getElementById('r-best-rt').textContent  = bestRT;
+      },
+    };
+
+    /* ════════════════════════════════════════════════════════════
+       10. CANVAS RESIZE
+    ════════════════════════════════════════════════════════════ */
+    function resizeCanvas() {
+      if (!gameCanvas) return;
+      const rect = gameCanvas.parentElement.getBoundingClientRect();
+      gameCanvas.width  = Math.round(rect.width);
+      gameCanvas.height = Math.round(rect.height);
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       11. GAME LOOP (tick) & SESSION LIFECYCLE
+    ════════════════════════════════════════════════════════════ */
+    function tick(now) {
+      if (GameState.phase !== 'playing') return;
+
+      // Stale-hand timeout: null out indexTip after STALE_HAND_TIMEOUT ms
+      if (
+        GameState.lastHandSeenTime &&
+        now - GameState.lastHandSeenTime > STALE_HAND_TIMEOUT
+      ) {
+        GameState.indexTip = null;
+      }
+
+      // Target logic
+      TargetManager.checkTimeout(now);
+      TargetManager.checkHit();
+
+      // Drift-free timer
+      const elapsed = now - GameState.sessionStartTime;
+      GameState.timerRemaining = Math.ceil(
+        Math.max(0, SESSION_DURATION - elapsed) / 1000
+      );
+
+      if (elapsed >= SESSION_DURATION) {
+        endSession();
+        return;
+      }
+
+      AnimationManager.prune(now);
+      renderFrame(now);
+
+      GameState.rafId = requestAnimationFrame(tick);
+    }
+
+    function startSession() {
+      resetGameState();
+      UIManager.hideError();
+      TargetManager.reset();
+      GameState.phase = 'starting';
+
+      UIManager.showScreen('game');
+      resizeCanvas();
+
+      // HandTracker owns camera start; errors surface via UIManager.showError
+      HandTracker.init(videoEl);
+
+      // Give camera a moment to warm up, then begin gameplay
+      // (onFrame will gate sends to 'playing' phase)
+      setTimeout(() => {
+        if (GameState.phase !== 'starting') return; // aborted by error
+        GameState.phase            = 'playing';
+        GameState.sessionStartTime = performance.now();
+        TargetManager.scheduleNext(FIRST_TARGET_DELAY);
+        GameState.rafId = requestAnimationFrame(tick);
+      }, 400);
+    }
+
+    function endSession() {
+      // Set ending phase FIRST to gate onHandResults callbacks
+      GameState.phase = 'ending';
+
+      cancelAnimationFrame(GameState.rafId);
+      GameState.rafId = null;
+
+      if (nextTargetTimer) {
+        clearTimeout(nextTargetTimer);
+        nextTargetTimer = null;
+      }
+
+      // Clear any in-flight target (not counted as miss — R9.2)
+      activeTarget = null;
+
+      HandTracker.stop();
+
+      const metrics = calculateMetrics();
+      UIManager.populateResults(metrics);
+
+      // Show results within 500ms (R10.1)
+      setTimeout(() => {
+        UIManager.showScreen('results');
+        GameState.phase = 'results';
+      }, 100);
+    }
+
+    /* ════════════════════════════════════════════════════════════
+       12. EVENT LISTENERS & BOOT
+    ════════════════════════════════════════════════════════════ */
+    document.addEventListener('DOMContentLoaded', () => {
+      gameCanvas = document.getElementById('game-canvas');
+      ctx        = gameCanvas.getContext('2d');
+      videoEl    = document.getElementById('camera-feed');
+
+      resizeCanvas();
+      window.addEventListener('resize', resizeCanvas);
+
+      UIManager.showScreen('start');
+
+      // CDN load watchdog — R1.6
+      setTimeout(() => {
+        if (typeof Hands === 'undefined') {
+          UIManager.showError(
+            'Could not load the required library. ' +
+            'Please check your internet connection, or serve this file ' +
+            'via a local HTTP server (e.g. python -m http.server).'
+          );
+          document.getElementById('btn-start').disabled = true;
+        }
+      }, CDN_LOAD_TIMEOUT);
+    });
+
+    document.getElementById('btn-start').addEventListener('click', () => {
+      startSession();
+    });
+
+    document.getElementById('btn-play-again').addEventListener('click', () => {
+      startSession();
+    });
+
+    document.getElementById('btn-home').addEventListener('click', () => {
+      // Stop any active session cleanly
+      if (GameState.phase === 'playing' || GameState.phase === 'starting') {
+        GameState.phase = 'ending';
+        cancelAnimationFrame(GameState.rafId);
+        if (nextTargetTimer) { clearTimeout(nextTargetTimer); nextTargetTimer = null; }
+        activeTarget = null;
+        HandTracker.stop();
+      }
+      UIManager.showScreen('start');
+      GameState.phase = 'idle';
+    });
+  </script>
+</body>
+</html>
