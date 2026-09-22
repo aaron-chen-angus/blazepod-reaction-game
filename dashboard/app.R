@@ -16,7 +16,7 @@ library(bslib)
 library(scales)
 
 # ── CONFIG ───────────────────────────────────────────────────
-SHEET_ID   <- "PASTE_YOUR_SPREADSHEET_ID_OR_URL_HERE"  # <-- edit me
+SHEET_ID   <- "1A76A9WlCKIuPKzYzwmjGy_9Dvkn7Hy0YeTLWh-YEmjM"  # BlazePod data sheet
 SHEET_NAME <- "Data"                                    # logger tab name
 REFRESH_MS <- 15000                                     # auto-refresh (ms)
 
