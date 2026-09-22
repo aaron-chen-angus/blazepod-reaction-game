@@ -237,6 +237,62 @@
     .btn-secondary:not(:disabled):hover { background: rgba(0,229,255,0.08); }
 
     /* ═══════════════════════════════════════════════════════
+       PARTICIPANT REGISTRATION FORM
+    ═══════════════════════════════════════════════════════ */
+    .reg-form {
+      width: 100%;
+      display: flex; flex-direction: column; gap: 1rem;
+    }
+    .reg-field { display: flex; flex-direction: column; gap: 0.4rem; width: 100%; }
+    .reg-label {
+      font-family: var(--font-tron);
+      font-size: 11px; letter-spacing: 0.2em;
+      color: var(--clr-cyan); text-transform: uppercase;
+    }
+    .reg-field input,
+    .reg-field select {
+      width: 100%;
+      min-height: 52px;
+      padding: 0.7rem 0.9rem;
+      background: var(--clr-surface);
+      border: 1px solid rgba(0,229,255,0.25);
+      border-radius: 6px;
+      color: var(--clr-text);
+      font-family: var(--font-body);
+      font-size: 17px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .reg-field input::placeholder { color: var(--clr-muted); }
+    .reg-field input:focus,
+    .reg-field select:focus {
+      outline: none;
+      border-color: var(--clr-primary);
+      box-shadow: 0 0 0 2px rgba(255,107,0,0.25);
+    }
+    .reg-field select option { background: var(--clr-surface); color: var(--clr-text); }
+    .reg-error {
+      background: rgba(58,0,0,0.9);
+      border: 1px solid var(--clr-danger);
+      border-radius: 6px;
+      padding: 0.7rem 1rem;
+      font-size: 15px; color: #ffaaaa; text-align: center; line-height: 1.4;
+    }
+
+    /* Participant summary on results screen */
+    .participant-summary {
+      width: 100%; max-width: 360px;
+      background: var(--clr-surface);
+      border: 1px solid rgba(0,229,255,0.14);
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      display: flex; flex-wrap: wrap; gap: 0.35rem 1.2rem;
+      justify-content: center;
+      font-size: 13px; color: var(--clr-muted);
+    }
+    .participant-summary b { color: var(--clr-text); font-weight: 600; }
+    .participant-summary:empty { display: none; }
+
+    /* ═══════════════════════════════════════════════════════
        GAME CONTAINER
     ═══════════════════════════════════════════════════════ */
     #game-container {
@@ -426,11 +482,65 @@
         <li>Hit as many circles as you can in 30 seconds!</li>
       </ol>
 
-      <button id="btn-start" class="btn btn-primary" aria-label="Start calibration and game">
+      <button id="btn-start" class="btn btn-primary" aria-label="Open participant registration">
         Initialise
       </button>
 
       <div id="error-message" role="alert" hidden></div>
+    </div>
+  </div>
+
+  <!-- ── PARTICIPANT REGISTRATION SCREEN ──────────────────── -->
+  <div id="screen-register" class="screen" hidden>
+    <div class="tron-frame">
+      <div class="corner-bl"></div>
+      <div class="corner-br"></div>
+
+      <div class="title-block">
+        <div class="title-label">// Participant Profile //</div>
+        <div class="title-main" style="font-size:clamp(20px,6vw,28px)">
+          Register
+          <span>Enter details to begin</span>
+        </div>
+      </div>
+
+      <div class="tron-scanline"></div>
+
+      <form id="register-form" class="reg-form" novalidate>
+        <label class="reg-field">
+          <span class="reg-label">Name</span>
+          <input id="reg-name" name="name" type="text" autocomplete="name"
+                 maxlength="80" required placeholder="Full name" />
+        </label>
+
+        <label class="reg-field">
+          <span class="reg-label">Gender</span>
+          <select id="reg-gender" name="gender" required>
+            <option value="" disabled selected>Select…</option>
+            <option value="Female">Female</option>
+            <option value="Male">Male</option>
+            <option value="Non-binary">Non-binary</option>
+            <option value="Prefer not to say">Prefer not to say</option>
+          </select>
+        </label>
+
+        <label class="reg-field">
+          <span class="reg-label">Age</span>
+          <input id="reg-age" name="age" type="number" inputmode="numeric"
+                 min="1" max="120" step="1" required placeholder="Years" />
+        </label>
+
+        <div id="reg-error" class="reg-error" role="alert" hidden></div>
+
+        <button id="btn-register" type="submit" class="btn btn-primary"
+                aria-label="Confirm details and start calibration">
+          Enter The Grid
+        </button>
+        <button id="btn-register-back" type="button" class="btn btn-secondary"
+                aria-label="Back to home screen">
+          Back
+        </button>
+      </form>
     </div>
   </div>
 
@@ -458,6 +568,8 @@
   <div id="screen-results" class="screen" hidden>
     <div class="results-title">// Session Complete //</div>
     <h2>Performance Report</h2>
+
+    <div id="participant-summary" class="participant-summary" aria-label="Participant details"></div>
 
     <div class="metric-grid" aria-label="Game results">
       <div class="metric" id="metric-score">
@@ -527,6 +639,13 @@
   const LM_LEFT_EYE_FALLBACK  = 159;
   const LM_RIGHT_EYE_FALLBACK = 386;
 
+  /* ── DATA LOGGING CONFIG ─────────────────────────────────
+     Paste your Google Apps Script Web App URL between the quotes
+     to enable automatic live logging to Google Sheets.
+     Leave empty ('') to disable logging (game works unchanged).
+     See GOOGLE_SHEETS_INTEGRATION.md for full setup steps.        */
+  const SHEETS_WEBAPP_URL = '';
+
   /* ── 2. DOM REFERENCES ───────────────────────────────── */
   let gameCanvas, ctx, videoEl;
   let calibBar, calibStatus, calibBarWrap;
@@ -553,6 +672,14 @@
   const Calibration = { faceStartTime: null, confirmed: false };
   let activeTarget    = null;
   let nextTargetTimer = null;
+
+  /* Participant profile — captured before the session begins.
+     Kept separate from GameState so game logic is untouched. */
+  const Participant = {
+    name: '', gender: '', age: null,
+    accessTimestamp: null,   // ISO 8601 string, captured at registration
+    accessTimestampLocal: '' // human-readable local time
+  };
 
   function resetGameState() {
     GameState.phase            = 'idle';
@@ -894,6 +1021,73 @@
     };
   }
 
+  /* ── 8b. DATA LOGGER (Google Sheets) ─────────────────────
+     Builds one flat session record and posts it automatically
+     to the configured Apps Script Web App. Fire-and-forget:
+     never blocks or breaks gameplay. Uses no-cors + urlencoded
+     body so no browser CORS pre-flight is needed.               */
+  const DataLogger = {
+    buildRecord() {
+      const { score, misses, reactionTimes } = GameState;
+      const total = score + misses;
+      const rts   = Array.isArray(reactionTimes) ? reactionTimes.slice() : [];
+      const sum   = rts.reduce((a, b) => a + b, 0);
+      const mean  = rts.length ? sum / rts.length : null;
+      const sorted = rts.slice().sort((a, b) => a - b);
+      const median = rts.length
+        ? (sorted.length % 2
+            ? sorted[(sorted.length - 1) / 2]
+            : (sorted[sorted.length/2 - 1] + sorted[sorted.length/2]) / 2)
+        : null;
+      const variance = rts.length
+        ? rts.reduce((a, b) => a + (b - mean) * (b - mean), 0) / rts.length
+        : null;
+
+      return {
+        // Participant / session header
+        participant_name:       Participant.name || '',
+        gender:                 Participant.gender || '',
+        age:                    Participant.age != null ? Participant.age : '',
+        access_timestamp_iso:   Participant.accessTimestamp || '',
+        access_timestamp_local: Participant.accessTimestampLocal || '',
+        submitted_at_iso:       new Date().toISOString(),
+        // Core metrics
+        score:                  score,
+        misses:                 misses,
+        targets_presented:      total,
+        accuracy_pct:           total ? +(score / total * 100).toFixed(1) : '',
+        avg_reaction_time_ms:   mean   != null ? Math.round(mean)   : '',
+        best_reaction_time_ms:  rts.length ? Math.min(...rts)       : '',
+        worst_reaction_time_ms: rts.length ? Math.max(...rts)       : '',
+        median_reaction_time_ms: median != null ? Math.round(median) : '',
+        sd_reaction_time_ms:    variance != null ? Math.round(Math.sqrt(variance)) : '',
+        hits_per_second:        +(score / (SESSION_DURATION / 1000)).toFixed(3),
+        session_duration_s:     SESSION_DURATION / 1000,
+        reaction_times_ms:      JSON.stringify(rts),
+        // Provenance
+        user_agent:             navigator.userAgent || '',
+        app_source:             'virtual-blazepod'
+      };
+    },
+
+    send() {
+      if (!SHEETS_WEBAPP_URL) return;              // logging disabled — no-op
+      try {
+        const record = this.buildRecord();
+        const body   = new URLSearchParams();
+        Object.keys(record).forEach((k) => body.append(k, record[k]));
+        fetch(SHEETS_WEBAPP_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: body.toString()
+        }).catch((err) => console.warn('[DataLogger] send failed:', err));
+      } catch (err) {
+        console.warn('[DataLogger] could not build/send record:', err);
+      }
+    }
+  };
+
   /* ── 9. REACTION TIME CHART ──────────────────────────── */
   function drawReactionChart(reactionTimes) {
     const canvas = rtChartCanvas;
@@ -1006,9 +1200,10 @@
   /* ── 10. UI MANAGER ──────────────────────────────────── */
   const UIManager = {
     showScreen(name) {
-      document.getElementById('screen-start').hidden   = (name !== 'start');
-      document.getElementById('screen-results').hidden = (name !== 'results');
-      document.getElementById('game-container').hidden =
+      document.getElementById('screen-start').hidden    = (name !== 'start');
+      document.getElementById('screen-register').hidden = (name !== 'register');
+      document.getElementById('screen-results').hidden  = (name !== 'results');
+      document.getElementById('game-container').hidden  =
         (name !== 'game' && name !== 'calibrating');
     },
     showCalibration(visible) {
@@ -1030,85 +1225,27 @@
       document.getElementById('r-accuracy').textContent = accuracy;
       document.getElementById('r-avg-rt').textContent   = avgRT;
       document.getElementById('r-best-rt').textContent  = bestRT;
+      this.populateParticipantSummary();
       // Draw the chart — uses raw reactionTimes from GameState
       drawReactionChart(GameState.reactionTimes);
-      // Send results back to the Telegram bot (only when launched from it)
-      reportBlazePodResults({ score, accuracy, avgRT, bestRT });
+    },
+    populateParticipantSummary() {
+      const el = document.getElementById('participant-summary');
+      if (!el) return;
+      if (!Participant.name && !Participant.gender && Participant.age == null) {
+        el.innerHTML = '';
+        return;
+      }
+      const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
+        { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]
+      ));
+      el.innerHTML =
+        `<span><b>${esc(Participant.name || '—')}</b></span>` +
+        `<span>Gender: <b>${esc(Participant.gender || '—')}</b></span>` +
+        `<span>Age: <b>${Participant.age != null ? esc(Participant.age) : '—'}</b></span>` +
+        `<span>Accessed: <b>${esc(Participant.accessTimestampLocal || '—')}</b></span>`;
     },
   };
-
-  /* ── 10b. REPORT RESULTS TO n8n / TELEGRAM ───────────── */
-  // Fallback webhook, used only if the launch link didn't carry one.
-  const N8N_WEBHOOK_URL_DEFAULT = "https://aaronchenangus.app.n8n.cloud/webhook/blazepod-results";
-  // The bot puts the player's Telegram id / name / results webhook in the launch URL.
-  // This is what makes the game reusable by any n8n bot with zero code edits.
-  const _bpParams   = new URLSearchParams(location.search);
-  const BP_UID      = _bpParams.get('uid')     || '';
-  const BP_NAME     = _bpParams.get('name')    || '';
-  const BP_WEBHOOK  = _bpParams.get('webhook') || N8N_WEBHOOK_URL_DEFAULT;
-
-  // Builds one friendly "report card" PNG: header text + the already-drawn
-  // reaction-time chart underneath — a proper screen-capture-style summary
-  // in a single image, with no extra libraries.
-  function buildReportCardImage({ score, accuracy, avgRT, bestRT }) {
-    const chartCanvas = document.getElementById('rt-chart');
-    const chartW = chartCanvas ? chartCanvas.width  : 600;
-    const chartH = chartCanvas ? chartCanvas.height : 220;
-    const headerH = 150;
-
-    const out = document.createElement('canvas');
-    out.width  = Math.max(chartW, 600);
-    out.height = headerH + chartH + 20;
-    const c = out.getContext('2d');
-
-    // Background
-    c.fillStyle = '#ffffff';
-    c.fillRect(0, 0, out.width, out.height);
-
-    // Header
-    c.fillStyle = '#111827';
-    c.font = 'bold 26px Arial, sans-serif';
-    c.fillText('🎯 Virtual BlazePod — Performance Report', 20, 38);
-
-    c.font = '15px Arial, sans-serif';
-    c.fillStyle = '#6b7280';
-    c.fillText(`${BP_NAME || 'Player'} · ${new Date().toLocaleString()}`, 20, 62);
-
-    c.font = '20px Arial, sans-serif';
-    c.fillStyle = '#111827';
-    const col2X = out.width / 2 + 10;
-    c.fillText(`🏆 Score: ${score}`,        20,    102);
-    c.fillText(`🎯 Accuracy: ${accuracy}`,  col2X, 102);
-    c.fillText(`⚡ Avg reaction: ${avgRT}`, 20,    132);
-    c.fillText(`🥇 Best time: ${bestRT}`,   col2X, 132);
-
-    // Chart, stretched to the card's full width so it lines up edge-to-edge
-    if (chartCanvas) c.drawImage(chartCanvas, 0, headerH, out.width, chartH);
-
-    return out.toDataURL('image/png').split(',')[1]; // pure base64, no prefix
-  }
-
-  function reportBlazePodResults(metrics) {
-    // No uid => opened directly (not from the bot) => behave exactly as before.
-    if (!BP_UID || !BP_WEBHOOK) return;
-    const reportImage = buildReportCardImage(metrics);
-    fetch(BP_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        uid: BP_UID,
-        name: BP_NAME,
-        score: String(metrics.score),
-        accuracy: metrics.accuracy,
-        avgReaction: metrics.avgRT,
-        bestTime: metrics.bestRT,
-        misses: GameState.misses,
-        times: GameState.reactionTimes,          // raw per-target ms, for the detailed report
-        timestamp: new Date().toISOString(),
-        chartImage: reportImage                   // field name kept for compatibility
-      })
-    }).catch(err => console.error('BlazePod → n8n report failed:', err));
-  }
 
   /* ── 11. CANVAS RESIZE ───────────────────────────────── */
   function resizeCanvas() {
@@ -1176,6 +1313,9 @@
     activeTarget = null;
     FaceTracker.stop();
     const metrics = calculateMetrics();
+    // Automatically log this session to Google Sheets (fire-and-forget,
+    // no button press required). No-op if logging is not configured.
+    DataLogger.send();
     UIManager.showCalibration(false);
     // Show results screen FIRST so the DOM is laid out, then populate
     // (chart canvas needs offsetWidth of a visible container)
@@ -1213,7 +1353,53 @@
     }, CDN_LOAD_TIMEOUT);
   });
 
-  document.getElementById('btn-start').addEventListener('click', startCalibration);
+  /* ── PARTICIPANT REGISTRATION FLOW ───────────────────── */
+  function openRegistration() {
+    UIManager.hideError();
+    const errEl = document.getElementById('reg-error');
+    if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+    UIManager.showScreen('register');
+    const nameEl = document.getElementById('reg-name');
+    if (nameEl) setTimeout(() => nameEl.focus(), 50);
+  }
+
+  function submitRegistration(evt) {
+    if (evt) evt.preventDefault();
+    const errEl  = document.getElementById('reg-error');
+    const name   = document.getElementById('reg-name').value.trim();
+    const gender = document.getElementById('reg-gender').value;
+    const ageRaw = document.getElementById('reg-age').value.trim();
+    const age    = parseInt(ageRaw, 10);
+
+    const showRegError = (msg) => {
+      if (!errEl) return;
+      errEl.textContent = msg; errEl.hidden = false;
+    };
+
+    if (!name)                          return showRegError('Please enter a name.');
+    if (!gender)                        return showRegError('Please select a gender.');
+    if (!ageRaw || Number.isNaN(age))   return showRegError('Please enter a valid age.');
+    if (age < 1 || age > 120)           return showRegError('Age must be between 1 and 120.');
+
+    // Capture profile + automatic access timestamp
+    const now = new Date();
+    Participant.name   = name;
+    Participant.gender = gender;
+    Participant.age    = age;
+    Participant.accessTimestamp      = now.toISOString();
+    Participant.accessTimestampLocal = now.toLocaleString();
+
+    if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
+
+    // Hand off to the existing, unchanged game flow
+    startCalibration();
+  }
+
+  document.getElementById('btn-start').addEventListener('click', openRegistration);
+  document.getElementById('register-form').addEventListener('submit', submitRegistration);
+  document.getElementById('btn-register-back').addEventListener('click', () => {
+    UIManager.showScreen('start');
+  });
   document.getElementById('btn-play-again').addEventListener('click', startCalibration);
   document.getElementById('btn-home').addEventListener('click', () => {
     if (['playing','calibrating','starting'].includes(GameState.phase)) {
