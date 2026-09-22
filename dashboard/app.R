@@ -12,7 +12,8 @@ library(shiny)
 library(googlesheets4)
 library(dplyr)
 library(tidyr)
-library(plotly)
+library(ggplot2)
+library(scales)
 library(lubridate)
 library(DT)
 library(jsonlite)
@@ -106,13 +107,35 @@ coerce_types <- function(df) {
   df %>% arrange(access_time)
 }
 
+# Force every column to a plain atomic character vector.
+# googlesheets4 can return list-columns, which break plotly with
+# "is.character(txt) is not TRUE". This flattens them safely.
+flatten_cols <- function(df) {
+  as.data.frame(
+    lapply(df, function(col) {
+      vapply(col, function(x) {
+        if (is.null(x) || length(x) == 0) return(NA_character_)
+        x <- x[[1]]
+        if (is.na(x)) NA_character_ else as.character(x)
+      }, character(1))
+    }),
+    stringsAsFactors = FALSE
+  )
+}
+
 read_sessions <- function() {
-  df <- tryCatch(read_sheet(SHEET_ID, sheet = SHEET_NAME, col_types = "c"),
-                 error = function(e) NULL)
+  # NOTE: do NOT pass col_types = "c". A single shortcode against a many-column
+  # sheet triggers "is.character(txt) is not TRUE" on some googlesheets4/readr
+  # versions. We let read_sheet auto-detect, then coerce types ourselves.
+  df <- tryCatch(
+    suppressMessages(read_sheet(SHEET_ID, sheet = SHEET_NAME)),
+    error = function(e) { message("read_sheet failed: ", conditionMessage(e)); NULL }
+  )
   is_demo <- FALSE
   if (is.null(df) || nrow(df) == 0) {
     if (USE_DEMO_IF_EMPTY) { df <- demo_data(); is_demo <- TRUE } else return(list(data = tibble(), demo = FALSE))
   }
+  df <- flatten_cols(df)          # <- kill any list-columns before anything else
   list(data = coerce_types(df), demo = is_demo)
 }
 
@@ -135,23 +158,28 @@ explode_rts <- function(df) {
   bind_rows(rows)
 }
 
-# ── PLOTLY THEME HELPER ──────────────────────────────────────────────────────
-style_plot <- function(p, ytitle = "", xtitle = "") {
-  p %>%
-    layout(
-      paper_bgcolor = "rgba(0,0,0,0)",
-      plot_bgcolor  = "rgba(0,0,0,0)",
-      font   = list(color = CLR$text, family = "Exo 2, system-ui, sans-serif"),
-      xaxis  = list(title = xtitle, gridcolor = CLR$grid, zeroline = FALSE,
-                    linecolor = "rgba(0,229,255,0.25)", tickfont = list(color = CLR$muted)),
-      yaxis  = list(title = ytitle, gridcolor = CLR$grid, zeroline = FALSE,
-                    linecolor = "rgba(0,229,255,0.25)", tickfont = list(color = CLR$muted)),
-      legend = list(font = list(color = CLR$text), bgcolor = "rgba(0,0,0,0)"),
-      margin = list(l = 55, r = 20, t = 30, b = 45),
-      hoverlabel = list(bgcolor = CLR$surface2, font = list(color = CLR$text))
-    ) %>%
-    config(displayModeBar = FALSE, responsive = TRUE)
+# ── GGPLOT TRON THEME ────────────────────────────────────────────────────────
+# Rendered as static plots (renderPlot) to avoid plotly's version-specific
+# "is.character(txt)" assertion entirely, while keeping the neon aesthetic.
+theme_tron <- function() {
+  theme_minimal(base_size = 14) +
+    theme(
+      plot.background   = element_rect(fill = CLR$surface, colour = NA),
+      panel.background  = element_rect(fill = CLR$surface, colour = NA),
+      panel.grid.major  = element_line(colour = "#12314a", linewidth = 0.3),
+      panel.grid.minor  = element_blank(),
+      axis.text         = element_text(colour = CLR$muted),
+      axis.title        = element_text(colour = CLR$cyan, face = "bold"),
+      plot.title        = element_text(colour = CLR$orange, face = "bold"),
+      legend.background = element_rect(fill = CLR$surface, colour = NA),
+      legend.key        = element_rect(fill = CLR$surface, colour = NA),
+      legend.text       = element_text(colour = CLR$text),
+      legend.title      = element_blank(),
+      plot.margin       = margin(10, 14, 10, 10)
+    )
 }
+GENDER_COLS <- c("Female" = "#ff6b00", "Male" = "#00e5ff", "Non-binary" = "#00e676",
+                 "Prefer not to say" = "#b06bff", "Unknown" = "#6b7a99")
 
 # ── EDUCATIONAL COPY ─────────────────────────────────────────────────────────
 edu <- function(text) div(class = "edu-note", HTML(paste0("&#9432; ", text)))
@@ -284,18 +312,18 @@ ui <- fluidPage(
           div(class = "panel",
               div(class = "panel-title", "Reaction Time Progression"),
               edu("Each point is one 30-second session in chronological order. <b>Average</b> (orange) is the mean reaction time across all hits; <b>Best</b> (cyan) is the single fastest hit. Falling lines over repeated sessions suggest a genuine <b>practice / learning effect</b> \u2014 the visuomotor system becoming faster with training."),
-              plotlyOutput("plot_rt_time", height = 340)
+              plotOutput("plot_rt_time", height = 340)
           ),
           fluidRow(
             column(6, div(class = "panel",
               div(class = "panel-title", "Speed vs. Accuracy"),
               edu("The classic <b>speed\u2013accuracy trade-off</b>: responding faster often costs accuracy. Points toward the <b>top-left</b> (fast <i>and</i> accurate) are the strongest performances."),
-              plotlyOutput("plot_scatter", height = 300)
+              plotOutput("plot_scatter", height = 300)
             )),
             column(6, div(class = "panel",
               div(class = "panel-title", "Throughput per Session"),
               edu("<b>Hits per second</b> combines speed and accuracy into one tempo measure \u2014 how many targets were successfully acquired per second of play."),
-              plotlyOutput("plot_throughput", height = 300)
+              plotOutput("plot_throughput", height = 300)
             ))
           )
         ),
@@ -305,18 +333,18 @@ ui <- fluidPage(
           div(class = "panel",
               div(class = "panel-title", "Distribution of Individual Reaction Times"),
               edu("Every single target hit is pooled here. Human visual reaction times are <b>right-skewed</b> \u2014 a fast cluster with a long slow tail. Note that BlazePod times include <b>movement time</b> (moving the head/eye onto the target), so they run longer than a simple key-press reaction time (~200\u2013270 ms in young adults)."),
-              plotlyOutput("plot_dist", height = 320)
+              plotOutput("plot_dist", height = 320)
           ),
           fluidRow(
             column(6, div(class = "panel",
               div(class = "panel-title", "Consistency (Variability)"),
               edu("The <b>standard deviation</b> of reaction times within a session measures <b>consistency</b>. Lower variability indicates steadier attention and control; a high spread can signal fatigue or lapses in concentration."),
-              plotlyOutput("plot_consistency", height = 300)
+              plotOutput("plot_consistency", height = 300)
             )),
             column(6, div(class = "panel",
               div(class = "panel-title", "Within-Session Fatigue Curve"),
               edu("Reaction time by <b>target order</b> (1st, 2nd, 3rd\u2026 hit). A rising trend across a session can indicate <b>vigilance decrement</b> \u2014 performance dropping as sustained attention is taxed."),
-              plotlyOutput("plot_fatigue", height = 300)
+              plotOutput("plot_fatigue", height = 300)
             ))
           )
         ),
@@ -327,18 +355,18 @@ ui <- fluidPage(
             column(6, div(class = "panel",
               div(class = "panel-title", "Mean Reaction Time by Gender"),
               edu("Group means with individual sessions overlaid. Interpret cautiously \u2014 differences are influenced by age, training, and sample size. Always compare like with like."),
-              plotlyOutput("plot_gender", height = 320)
+              plotOutput("plot_gender", height = 320)
             )),
             column(6, div(class = "panel",
               div(class = "panel-title", "Reaction Time by Age Band"),
               edu("Reaction time typically <b>slows with age</b> in adulthood (well documented in the literature). This chart lets you see that relationship in your own cohort."),
-              plotlyOutput("plot_age", height = 320)
+              plotOutput("plot_age", height = 320)
             ))
           ),
           div(class = "panel",
               div(class = "panel-title", "Leaderboard \u2014 Best Reaction Times"),
               edu("Ranked by fastest single hit. A friendly, motivating way to surface top performances."),
-              plotlyOutput("plot_leaderboard", height = 320)
+              plotOutput("plot_leaderboard", height = 320)
           )
         ),
 
@@ -481,116 +509,169 @@ server <- function(input, output, session) {
     )
   })
 
-  need_data <- function(df) validate(need(nrow(df) > 0, "No sessions match the current filters yet."))
+  # A themed placeholder plot with a centered message. Used instead of
+  # shiny's validate()/need(), which is the source of the
+  # "is.character(txt) is not TRUE" error on some Shiny versions.
+  msg_plot <- function(msg) {
+    ggplot() +
+      annotate("text", x = 0, y = 0, label = msg, colour = CLR$muted, size = 5) +
+      theme_void() +
+      theme(plot.background = element_rect(fill = CLR$surface, colour = NA),
+            panel.background = element_rect(fill = CLR$surface, colour = NA))
+  }
+
+  # Wrap a plot expression: on empty data or ANY error, show a readable
+  # message inside the panel instead of crashing the output.
+  safe_plot <- function(expr) {
+    tryCatch(
+      force(expr),
+      error = function(e) msg_plot(paste("Plot error:", conditionMessage(e)))
+    )
+  }
 
   # ── OVERVIEW ────────────────────────────────────────────────────────────────
-  output$plot_rt_time <- renderPlotly({
-    df <- filtered(); need_data(df)
-    df <- df %>% mutate(idx = row_number(),
-      tip = paste0(participant_name, "<br>Avg ", avg_reaction_time_ms, " ms<br>Best ", best_reaction_time_ms, " ms"))
-    plot_ly(df, x = ~idx) %>%
-      add_trace(y = ~avg_reaction_time_ms, name = "Average", type = "scatter", mode = "lines+markers",
-                line = list(color = CLR$orange, width = 3), marker = list(color = CLR$orange, size = 8),
-                text = ~tip, hoverinfo = "text") %>%
-      add_trace(y = ~best_reaction_time_ms, name = "Best", type = "scatter", mode = "lines+markers",
-                line = list(color = CLR$cyan, width = 2, dash = "dot"), marker = list(color = CLR$cyan, size = 6),
-                text = ~tip, hoverinfo = "text") %>%
-      style_plot("Reaction time (ms)", "Session (chronological)")
-  })
+  output$plot_rt_time <- renderPlot({
+    df <- filtered()
+    if (nrow(df) == 0) return(msg_plot("No sessions match the current filters yet."))
+    safe_plot({
+      d <- df %>% mutate(idx = row_number()) %>%
+        select(idx, avg_reaction_time_ms, best_reaction_time_ms) %>%
+        pivot_longer(-idx, names_to = "metric", values_to = "ms") %>%
+        mutate(metric = ifelse(metric == "avg_reaction_time_ms", "Average", "Best"))
+      ggplot(d, aes(idx, ms, colour = metric)) +
+        geom_line(linewidth = 1.1) + geom_point(size = 2.6) +
+        scale_colour_manual(values = c("Average" = CLR$orange, "Best" = CLR$cyan)) +
+        labs(x = "Session (chronological)", y = "Reaction time (ms)") +
+        theme_tron()
+    })
+  }, bg = "transparent")
 
-  output$plot_scatter <- renderPlotly({
-    df <- filtered(); need_data(df)
-    plot_ly(df, x = ~avg_reaction_time_ms, y = ~accuracy_pct, color = ~gender,
-            colors = c(CLR$orange, CLR$cyan, CLR$green),
-            type = "scatter", mode = "markers",
-            marker = list(size = 12, opacity = 0.85, line = list(color = "rgba(255,255,255,0.25)", width = 1)),
-            text = ~paste0(participant_name, "<br>", avg_reaction_time_ms, " ms<br>", accuracy_pct, "%"),
-            hoverinfo = "text") %>%
-      style_plot("Accuracy (%)", "Average reaction time (ms)")
-  })
+  output$plot_scatter <- renderPlot({
+    df <- filtered()
+    if (nrow(df) == 0) return(msg_plot("No sessions match the current filters yet."))
+    safe_plot({
+      df$gender <- as.character(df$gender); df$gender[is.na(df$gender) | df$gender == ""] <- "Unknown"
+      ggplot(df, aes(avg_reaction_time_ms, accuracy_pct, colour = gender)) +
+        geom_point(size = 3.4, alpha = 0.85) +
+        scale_colour_manual(values = GENDER_COLS) +
+        labs(x = "Average reaction time (ms)", y = "Accuracy (%)") +
+        theme_tron()
+    })
+  }, bg = "transparent")
 
-  output$plot_throughput <- renderPlotly({
-    df <- filtered(); need_data(df)
-    df <- df %>% mutate(idx = row_number())
-    plot_ly(df, x = ~idx, y = ~hits_per_second, type = "bar",
-            marker = list(color = CLR$cyan, line = list(color = CLR$surface2, width = 1)),
-            text = ~paste0(participant_name, "<br>", hits_per_second, " hits/s"), hoverinfo = "text") %>%
-      style_plot("Hits per second", "Session")
-  })
+  output$plot_throughput <- renderPlot({
+    df <- filtered()
+    if (nrow(df) == 0) return(msg_plot("No sessions match the current filters yet."))
+    safe_plot({
+      d <- df %>% mutate(idx = row_number())
+      ggplot(d, aes(idx, hits_per_second)) +
+        geom_col(fill = CLR$cyan, colour = CLR$surface2, width = 0.8) +
+        labs(x = "Session", y = "Hits per second") +
+        theme_tron()
+    })
+  }, bg = "transparent")
 
   # ── REACTION TIME ────────────────────────────────────────────────────────────
-  output$plot_dist <- renderPlotly({
-    rts <- explode_rts(filtered()); validate(need(nrow(rts) > 0, "No reaction-time data yet."))
-    plot_ly(rts, x = ~reaction_time_ms, type = "histogram", nbinsx = 30,
-            marker = list(color = CLR$orange, line = list(color = CLR$surface2, width = 1)),
-            hovertemplate = "%{x} ms: %{y}<extra></extra>") %>%
-      layout(shapes = list(list(type = "line", x0 = mean(rts$reaction_time_ms), x1 = mean(rts$reaction_time_ms),
-              y0 = 0, y1 = 1, yref = "paper", line = list(color = CLR$cyan, width = 2, dash = "dash")))) %>%
-      add_annotations(x = mean(rts$reaction_time_ms), y = 1, yref = "paper",
-              text = paste0("mean ", round(mean(rts$reaction_time_ms)), " ms"),
-              showarrow = FALSE, font = list(color = CLR$cyan, size = 11), yshift = 8) %>%
-      style_plot("Number of hits", "Reaction time (ms)")
-  })
+  output$plot_dist <- renderPlot({
+    rts <- explode_rts(filtered())
+    if (nrow(rts) == 0) return(msg_plot("No reaction-time data yet."))
+    safe_plot({
+      m <- mean(rts$reaction_time_ms)
+      ggplot(rts, aes(reaction_time_ms)) +
+        geom_histogram(bins = 30, fill = CLR$orange, colour = CLR$surface2) +
+        geom_vline(xintercept = m, colour = CLR$cyan, linetype = "dashed", linewidth = 1) +
+        annotate("text", x = m, y = Inf, label = paste0("mean ", round(m), " ms"),
+                 colour = CLR$cyan, vjust = 1.6, hjust = -0.05, size = 4) +
+        labs(x = "Reaction time (ms)", y = "Number of hits") +
+        theme_tron()
+    })
+  }, bg = "transparent")
 
-  output$plot_consistency <- renderPlotly({
-    df <- filtered(); need_data(df)
-    df <- df %>% mutate(idx = row_number())
-    plot_ly(df, x = ~idx, y = ~sd_reaction_time_ms, type = "scatter", mode = "lines+markers",
-            line = list(color = CLR$green, width = 2), marker = list(color = CLR$green, size = 7),
-            text = ~paste0(participant_name, "<br>SD ", sd_reaction_time_ms, " ms"), hoverinfo = "text") %>%
-      style_plot("SD of reaction time (ms)", "Session")
-  })
+  output$plot_consistency <- renderPlot({
+    df <- filtered()
+    if (nrow(df) == 0) return(msg_plot("No sessions match the current filters yet."))
+    safe_plot({
+      d <- df %>% mutate(idx = row_number())
+      ggplot(d, aes(idx, sd_reaction_time_ms)) +
+        geom_line(colour = CLR$green, linewidth = 1) +
+        geom_point(colour = CLR$green, size = 2.6) +
+        labs(x = "Session", y = "SD of reaction time (ms)") +
+        theme_tron()
+    })
+  }, bg = "transparent")
 
-  output$plot_fatigue <- renderPlotly({
-    rts <- explode_rts(filtered()); validate(need(nrow(rts) > 0, "No reaction-time data yet."))
-    agg <- rts %>% group_by(target_index) %>%
-      summarise(mean_rt = mean(reaction_time_ms), .groups = "drop")
-    plot_ly() %>%
-      add_trace(data = rts, x = ~target_index, y = ~reaction_time_ms, type = "scatter", mode = "markers",
-                marker = list(color = "rgba(255,107,0,0.35)", size = 6), name = "hits", hoverinfo = "skip") %>%
-      add_trace(data = agg, x = ~target_index, y = ~mean_rt, type = "scatter", mode = "lines+markers",
-                line = list(color = CLR$cyan, width = 3), marker = list(color = CLR$cyan, size = 7),
-                name = "mean", text = ~paste0("Target ", target_index, "<br>", round(mean_rt), " ms"),
-                hoverinfo = "text") %>%
-      style_plot("Reaction time (ms)", "Target order within session")
-  })
+  output$plot_fatigue <- renderPlot({
+    rts <- explode_rts(filtered())
+    if (nrow(rts) == 0) return(msg_plot("No reaction-time data yet."))
+    safe_plot({
+      agg <- rts %>% group_by(target_index) %>%
+        summarise(mean_rt = mean(reaction_time_ms), .groups = "drop")
+      ggplot() +
+        geom_point(data = rts, aes(target_index, reaction_time_ms),
+                   colour = CLR$orange, alpha = 0.30, size = 2) +
+        geom_line(data = agg, aes(target_index, mean_rt), colour = CLR$cyan, linewidth = 1.2) +
+        geom_point(data = agg, aes(target_index, mean_rt), colour = CLR$cyan, size = 2.6) +
+        labs(x = "Target order within session", y = "Reaction time (ms)") +
+        theme_tron()
+    })
+  }, bg = "transparent")
 
   # ── GROUP COMPARISON ──────────────────────────────────────────────────────────
-  output$plot_gender <- renderPlotly({
-    df <- filtered(); need_data(df)
-    plot_ly(df, x = ~gender, y = ~avg_reaction_time_ms, color = ~gender,
-            colors = c(CLR$orange, CLR$cyan, CLR$green), type = "box",
-            boxpoints = "all", jitter = 0.4, pointpos = 0,
-            marker = list(size = 6, opacity = 0.6)) %>%
-      style_plot("Average reaction time (ms)", "") %>% layout(showlegend = FALSE)
-  })
+  output$plot_gender <- renderPlot({
+    df <- filtered()
+    if (nrow(df) == 0) return(msg_plot("No sessions match the current filters yet."))
+    safe_plot({
+      df$gender <- as.character(df$gender); df$gender[is.na(df$gender) | df$gender == ""] <- "Unknown"
+      ggplot(df, aes(gender, avg_reaction_time_ms, fill = gender)) +
+        geom_boxplot(colour = CLR$muted, alpha = 0.55, outlier.shape = NA) +
+        geom_jitter(aes(colour = gender), width = 0.18, size = 2.4, alpha = 0.8) +
+        scale_fill_manual(values = GENDER_COLS) +
+        scale_colour_manual(values = GENDER_COLS) +
+        labs(x = NULL, y = "Average reaction time (ms)") +
+        theme_tron() + theme(legend.position = "none")
+    })
+  }, bg = "transparent")
 
-  output$plot_age <- renderPlotly({
-    df <- filtered(); need_data(df)
-    if (!"age_band" %in% names(df)) return(plotly_empty())
-    agg <- df %>% filter(!is.na(age_band)) %>% group_by(age_band) %>%
-      summarise(mean_rt = mean(avg_reaction_time_ms, na.rm = TRUE), n = n(), .groups = "drop")
-    plot_ly(agg, x = ~age_band, y = ~mean_rt, type = "bar",
-            marker = list(color = CLR$orange, line = list(color = CLR$cyan, width = 1)),
-            text = ~paste0(round(mean_rt), " ms<br>n=", n), hoverinfo = "text",
-            textposition = "none") %>%
-      style_plot("Mean reaction time (ms)", "Age band")
-  })
+  output$plot_age <- renderPlot({
+    df <- filtered()
+    if (nrow(df) == 0 || !"age_band" %in% names(df) || all(is.na(df$age_band)))
+      return(msg_plot("No age data yet."))
+    safe_plot({
+      agg <- df %>% filter(!is.na(age_band)) %>% group_by(age_band) %>%
+        summarise(mean_rt = mean(avg_reaction_time_ms, na.rm = TRUE), n = dplyr::n(), .groups = "drop") %>%
+        mutate(age_band = as.character(age_band))
+      ggplot(agg, aes(age_band, mean_rt)) +
+        geom_col(fill = CLR$orange, colour = CLR$cyan, width = 0.75) +
+        geom_text(aes(label = paste0(round(mean_rt), " ms\n(n=", n, ")")),
+                  vjust = -0.3, colour = CLR$text, size = 3.4) +
+        labs(x = "Age band", y = "Mean reaction time (ms)") +
+        expand_limits(y = max(agg$mean_rt) * 1.15) +
+        theme_tron()
+    })
+  }, bg = "transparent")
 
-  output$plot_leaderboard <- renderPlotly({
-    df <- filtered(); need_data(df)
-    lb <- df %>% group_by(participant_name) %>%
-      summarise(best = min(best_reaction_time_ms, na.rm = TRUE), .groups = "drop") %>%
-      arrange(best) %>% head(10) %>% mutate(participant_name = factor(participant_name, levels = rev(participant_name)))
-    plot_ly(lb, x = ~best, y = ~participant_name, type = "bar", orientation = "h",
-            marker = list(color = CLR$cyan, line = list(color = CLR$orange, width = 1)),
-            text = ~paste0(best, " ms"), hoverinfo = "text", textposition = "auto") %>%
-      style_plot("Best reaction time (ms)", "")
-  })
+  output$plot_leaderboard <- renderPlot({
+    df <- filtered()
+    if (nrow(df) == 0) return(msg_plot("No sessions match the current filters yet."))
+    safe_plot({
+      lb <- df %>%
+        mutate(participant_name = as.character(participant_name)) %>%
+        group_by(participant_name) %>%
+        summarise(best = min(best_reaction_time_ms, na.rm = TRUE), .groups = "drop") %>%
+        arrange(best) %>% head(10) %>%
+        mutate(participant_name = factor(participant_name, levels = rev(participant_name)))
+      ggplot(lb, aes(best, participant_name)) +
+        geom_col(fill = CLR$cyan, colour = CLR$orange, width = 0.72) +
+        geom_text(aes(label = paste0(best, " ms")), hjust = 1.1, colour = CLR$surface, size = 3.6, fontface = "bold") +
+        labs(x = "Best reaction time (ms)", y = NULL) +
+        theme_tron()
+    })
+  }, bg = "transparent")
 
   # ── TABLE ──────────────────────────────────────────────────────────────────────
   output$table <- renderDT({
-    df <- filtered(); need_data(df)
+    df <- filtered()
+    if (nrow(df) == 0) return(datatable(data.frame(Message = "No sessions match the current filters yet."), rownames = FALSE))
     cols <- intersect(c("access_timestamp_local", "participant_name", "gender", "age",
                         "score", "misses", "accuracy_pct", "avg_reaction_time_ms",
                         "best_reaction_time_ms", "median_reaction_time_ms",

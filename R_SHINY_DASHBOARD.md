@@ -5,18 +5,27 @@ This dashboard reads the **same Google Sheet** that Virtual BlazePod writes to (
 reaction-time and performance data. It auto-refreshes on an interval, so new sessions appear without
 restarting the app.
 
-A ready-to-run app is provided in [`dashboard/app.R`](dashboard/app.R).
+- **Live dashboard:** https://smile-rp.shinyapps.io/Virtual_BlazePod/
+
+A ready-to-run app is provided in [`dashboard/app.R`](dashboard/app.R). It is a Tron-styled, educational
+dashboard whose charts are rendered with **`ggplot2`** (static, for maximum portability across R
+environments); interactivity is provided through the filters, tabs, live refresh, and sortable table.
 
 ---
 
 ## What it shows
 
-- **KPI cards** — total sessions, unique participants, mean accuracy, mean best reaction time.
-- **Reaction time over time** — average and best RT per session, ordered by access time.
-- **Accuracy vs. reaction time** — scatter showing the speed/accuracy trade-off.
-- **RT distribution** — histogram/boxplot of per-target reaction times across the cohort.
-- **Group comparisons** — mean RT / accuracy by **gender** and by **age band**.
-- **Session table** — the raw rows, filterable by participant.
+Organised into five tabs:
+
+- **Overview** — KPI cards (sessions, participants, mean accuracy, fastest hit, mean RT); reaction-time
+  progression per session (average + best); speed vs. accuracy scatter; throughput per session.
+- **Reaction Time** — distribution of individual reaction times with mean line; consistency (SD)
+  trend; within-session fatigue curve by target order.
+- **Group Comparison** — reaction time by gender (box + jitter); mean RT by age band; best-time
+  leaderboard.
+- **Session Records** — the raw rows in a filterable, sortable table.
+- **The Science** — an educational explainer of reaction time, mental chronometry, what the tool
+  measures, how to read each metric, and the not-a-medical-device caveat.
 
 Filters: participant, gender, age range, and date range. Auto-refresh interval is configurable.
 
@@ -30,7 +39,7 @@ Filters: participant, gender, age range, and date range. Auto-refresh interval i
 ```r
 install.packages(c(
   "shiny", "googlesheets4", "dplyr", "tidyr",
-  "ggplot2", "lubridate", "DT", "jsonlite", "bslib", "scales"
+  "ggplot2", "scales", "lubridate", "DT", "jsonlite", "htmltools"
 ))
 ```
 
@@ -43,10 +52,10 @@ sheet readable and use `googlesheets4` in de-authenticated mode.
 
 1. In Google Sheets: **Share ▸ General access ▸ "Anyone with the link" ▸ Viewer**.
 2. Copy the spreadsheet URL (or just its ID — the long token between `/d/` and `/edit`).
-3. In `dashboard/app.R`, set:
+3. In `dashboard/app.R`, set the spreadsheet ID and tab (already configured for this project):
 
    ```r
-   SHEET_ID   <- "PASTE_YOUR_SPREADSHEET_ID_OR_URL_HERE"
+   SHEET_ID   <- "1A76A9WlCKIuPKzYzwmjGy_9Dvkn7Hy0YeTLWh-YEmjM"
    SHEET_NAME <- "Data"   # tab name used by the logger
    ```
 
@@ -85,12 +94,22 @@ balance for classroom/lab use.
 
 ---
 
-## Deployment options
+## Deployment
 
-- **shinyapps.io** — free tier; `rsconnect::deployApp("dashboard")`. Use a service account for a
-  private sheet, since the hosted app runs non-interactively.
-- **Posit Connect / Shiny Server** — for institutional hosting.
+The dashboard is deployed live at:
+
+- **https://smile-rp.shinyapps.io/Virtual_BlazePod/**
+
+Other options:
+
+- **shinyapps.io** — `rsconnect::deployApp("dashboard")`. Because the app runs non-interactively when
+  hosted, the sheet must be readable without interactive login: either keep it link-shared as Viewer
+  (with `gs4_deauth()`, as configured) or use a service account for a private sheet.
+- **Posit Cloud / Posit Connect / Shiny Server** — for institutional hosting.
 - **Local** — run on a lab machine and view at `http://localhost:<port>`.
+
+To redeploy after changes, re-run `rsconnect::deployApp("dashboard")` (or use the Publish button in
+RStudio / Posit Cloud) against the same shinyapps.io destination.
 
 ---
 

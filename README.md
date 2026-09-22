@@ -5,6 +5,7 @@
 | | |
 |---|---|
 | **Live application** | https://aaron-chen-angus.github.io/blazepod-reaction-game/ |
+| **Live analytics dashboard** | https://smile-rp.shinyapps.io/Virtual_BlazePod/ |
 | **Source repository** | https://github.com/aaron-chen-angus/blazepod-reaction-game |
 | **Platform** | Client-side web application (HTML5 / JavaScript / WebGL-accelerated canvas) |
 | **Face / eye tracking** | Google MediaPipe Face Mesh (468–478 landmark model) |
@@ -280,6 +281,15 @@ The app is published as a static site:
 To update the live site, commit `index.html` to the Pages-enabled branch; GitHub Pages serves it over
 HTTPS, satisfying the camera-permission requirement.
 
+### 7.3 Analytics dashboard (R Shiny)
+
+The live performance dashboard is deployed on shinyapps.io:
+
+- **Live dashboard:** https://smile-rp.shinyapps.io/Virtual_BlazePod/
+
+It reads the Google Sheet populated by the app and refreshes automatically. See
+[`R_SHINY_DASHBOARD.md`](R_SHINY_DASHBOARD.md) for setup and redeployment.
+
 ---
 
 ## 8. Google Sheets & R Shiny Integration
@@ -292,11 +302,16 @@ becomes one row; the sheet becomes the live data source. Logging is enabled by p
 into the `SHEETS_WEBAPP_URL` constant in `index.html`; when empty, logging is disabled and the game runs
 unchanged. Full setup: **[`GOOGLE_SHEETS_INTEGRATION.md`](GOOGLE_SHEETS_INTEGRATION.md)**.
 
-**R Shiny live dashboard — implemented.** A ready-to-run R Shiny application (`dashboard/app.R`) reads
-the same Google Sheet in near real time (via `googlesheets4`, polled on an interval) and renders live
-visualisations: reaction-time trends per session, accuracy vs. RT trade-off, RT distribution, and cohort
-comparisons by gender and age band, plus KPI cards and a filterable session table. Full setup:
-**[`R_SHINY_DASHBOARD.md`](R_SHINY_DASHBOARD.md)**.
+**R Shiny live dashboard — deployed.** A Tron-styled, educational R Shiny application (`dashboard/app.R`)
+reads the same Google Sheet in near real time (via `googlesheets4`, polled on an interval) and renders
+live visualisations: reaction-time progression per session, accuracy vs. RT trade-off, throughput, RT
+distribution, consistency (variability), within-session fatigue curve, and cohort comparisons by gender
+and age band, plus KPI cards, a filterable session table, and an educational "The Science" tab. Charts
+are rendered with `ggplot2` for maximum portability across R environments.
+
+- **Live dashboard:** https://smile-rp.shinyapps.io/Virtual_BlazePod/
+
+Full setup: **[`R_SHINY_DASHBOARD.md`](R_SHINY_DASHBOARD.md)**.
 
 ---
 

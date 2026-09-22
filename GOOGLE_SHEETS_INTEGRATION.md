@@ -197,5 +197,8 @@ Columns match the [Data Dictionary](README.md#4-full-data-dictionary). Summary:
 
 ## Next
 
-Once data is flowing into the sheet, see **[`R_SHINY_DASHBOARD.md`](R_SHINY_DASHBOARD.md)** to build a
-live R Shiny dashboard on top of it.
+Once data is flowing into the sheet, it feeds the live R Shiny analytics dashboard:
+
+- **Live dashboard:** https://smile-rp.shinyapps.io/Virtual_BlazePod/
+
+See **[`R_SHINY_DASHBOARD.md`](R_SHINY_DASHBOARD.md)** for how it is built, configured, and redeployed.
